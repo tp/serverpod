@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:serverpod_auth_client/serverpod_auth_client.dart';
 import 'package:serverpod_auth_shared_flutter/serverpod_auth_shared_flutter.dart';
 
@@ -15,7 +14,9 @@ const _prefsVersion = 2;
 /// Please refer to the documentation to see supported methods. Session
 /// information is stored in the shared preferences of the app and persists
 /// between restarts of the app.
-class SessionManager with ChangeNotifier {
+///
+/// Notifies the outside for any change to [signedInUser].
+class SessionManager implements Listenable {
   static SessionManager? _instance;
 
   /// The auth module's caller.
@@ -45,11 +46,11 @@ class SessionManager with ChangeNotifier {
     return _instance!;
   }
 
-  UserInfo? _signedInUser;
+  final _signedInUser = ValueNotifier<UserInfo?>(null);
 
   /// Returns information about the signed in user or null if no user is
   /// currently signed in.
-  UserInfo? get signedInUser => _signedInUser;
+  UserInfo? get signedInUser => _signedInUser.value;
 
   /// Registers the signed in user, updates the [keyManager], and upgrades the
   /// streaming connection if it is open.
@@ -58,7 +59,7 @@ class SessionManager with ChangeNotifier {
     int authenticationKeyId,
     String authenticationKey,
   ) async {
-    _signedInUser = userInfo;
+    _signedInUser.value = userInfo;
     var key = '$authenticationKeyId:$authenticationKey';
 
     // Store in key manager.
@@ -69,7 +70,6 @@ class SessionManager with ChangeNotifier {
 
     // Update streaming connection, if it's open.
     await caller.client.updateStreamingConnectionAuthenticationKey(key);
-    notifyListeners();
   }
 
   /// Returns true if the user is currently signed in.
@@ -99,11 +99,10 @@ class SessionManager with ChangeNotifier {
       }
       await caller.client.updateStreamingConnectionAuthenticationKey(null);
 
-      _signedInUser = null;
+      _signedInUser.value = null;
       await _storeSharedPrefs();
       await keyManager.remove();
 
-      notifyListeners();
       return true;
     } catch (e) {
       return false;
@@ -135,9 +134,9 @@ class SessionManager with ChangeNotifier {
   /// Returns true if successful.
   Future<bool> refreshSession() async {
     try {
-      _signedInUser = await caller.status.getUserInfo();
+      _signedInUser.value = await caller.status.getUserInfo();
       await _storeSharedPrefs();
-      notifyListeners();
+
       return true;
     } catch (e) {
       return false;
@@ -152,9 +151,7 @@ class SessionManager with ChangeNotifier {
     var json = await _storage.getString('${_prefsKey}_${keyManager.runMode}');
     if (json == null) return;
 
-    _signedInUser = Protocol().deserialize<UserInfo>(jsonDecode(json));
-
-    notifyListeners();
+    _signedInUser.value = Protocol().deserialize<UserInfo>(jsonDecode(json));
   }
 
   Future<void> _storeSharedPrefs() async {
@@ -171,19 +168,28 @@ class SessionManager with ChangeNotifier {
   /// Uploads a new user image if the user is signed in. Returns true if upload
   /// was successful.
   Future<bool> uploadUserImage(ByteData image) async {
-    if (_signedInUser == null) return false;
+    if (_signedInUser.value == null) return false;
 
     try {
       var success = await caller.user.setUserImage(image);
       if (success) {
-        _signedInUser = await caller.status.getUserInfo();
+        _signedInUser.value = await caller.status.getUserInfo();
 
-        notifyListeners();
         return true;
       }
       return false;
     } catch (e) {
       return false;
     }
+  }
+
+  @override
+  void addListener(VoidCallback listener) {
+    _signedInUser.addListener(listener);
+  }
+
+  @override
+  void removeListener(VoidCallback listener) {
+    _signedInUser.removeListener(listener);
   }
 }
